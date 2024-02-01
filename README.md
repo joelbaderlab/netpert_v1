@@ -27,8 +27,7 @@ git checkout -b manuscript_username
 
 `databases`: fixed data files downloaded from external sources and created by NetPert.
 
-`projects`: project directories containing data and results specific to a project. An example directory is provided:
-`projects/manuscript_results` - an example directory for outputting manuscript results.
+`projects`: project directories containing data and results specific to a project. An example directory for the manuscript results is provided: `projects/manuscript_results`.
 
 ## Setup: download large files (~1.3 GB size) and create conda environment
 
@@ -56,30 +55,35 @@ mkdir projects/dir_name
 ```shell
 python ./bin/netpert.py analysis [-h] [-s {human,mouse}] project_dir driver
 ```
-positional arguments:
-project_dir	project directory name.
-driver	network driver gene symbol.
+positional arguments:<br />
+`project_dir` project directory name.<br />
+`driver` network driver gene symbol.
 
-optional arguments:
--h, --help	show this help message and exit.
+optional arguments:<br />
+-h, --help	show this help message and exit.<br />
 -s {human,mouse}    species. Default human.
 
 Required files in project directory:
 1. responses file
 
-Create a response file:
+### Create a response file:
 
 Make a file called `responses` in the project directory. The file must have extension .xlsx, .csv, or .tsv. Each row should contain the gene symbol of one response gene. There is to be no header. See `projects/manuscript_results/responses.csv` for an example.  
 
-Output:
+### NetPert analysis output:
 NetPert outputs a file called `geneRankings.tsv` to the project directory. The file contains the ranking of each gene in the network. The columns are as follows:
+
 `type` D: driver, R: response, DIR: intermediate having direct connections to the driver and at least one response gene, DI: intermediate connected directly to the driver but not to a response gene, IR: intermediate connected directly to a response gene but not the driver, and I: intermediate directly connected to neither the driver nor a response gene.
+
 `DIIR` DIIR: a subset of DI and IR genes that are on a path of length 3 between driver and a response.
+
 `NetPert_rank` NetPert ranking.
+
 `NetPert_weight` NetPert weight.
+
 `repurposinghub_cpds` Drug Repurposing Hub compounds that target the protein of the specified gene. Compounds with more than 5 targets were omitted. 
 
-Example: output manuscript results
+Output manuscript results example:
 
 ```shell
 python ./bin/netpert.py analysis -s mouse ./projects/manuscript_results Twist1
