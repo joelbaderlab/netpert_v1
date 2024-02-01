@@ -55,16 +55,16 @@ mkdir projects/dir_name
 ```shell
 python ./bin/netpert.py analysis [-h] [-s {human,mouse}] project_dir driver
 ```
-positional arguments:<br />
+### Positional arguments:
 `project_dir` project directory name.<br />
 `driver` network driver gene symbol.
 
-optional arguments:<br />
--h, --help	show this help message and exit.<br />
--s {human,mouse}    species. Default human.
+### Optional arguments:
+`-h`, `--help` show this help message and exit.<br />
+`-s {human,mouse}` species. Default human.
 
-Required files in project directory:
-1. responses file
+### Required files in project directory:
+responses file
 
 ### Create a response file:
 
@@ -83,7 +83,7 @@ NetPert outputs a file called `geneRankings.tsv` to the project directory. The f
 
 `repurposinghub_cpds` Drug Repurposing Hub compounds that target the protein of the specified gene. Compounds with more than 5 targets were omitted. 
 
-Output manuscript results example:
+### Output manuscript results example:
 
 ```shell
 python ./bin/netpert.py analysis -s mouse ./projects/manuscript_results Twist1
