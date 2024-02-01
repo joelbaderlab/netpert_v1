@@ -1,0 +1,10 @@
+name: netpert_env
+channels:
+  - conda-forge
+  - anaconda
+  - defaults
+dependencies:
+  - numpy
+  - pandas
+  - python
+  - scipy
