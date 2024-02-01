@@ -1,0 +1,23 @@
+# -*- mode: gitignore; -*-
+
+# Python related
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+*.pickle
+
+# Emacs related
+*~
+\#*\#
+.\#*
+
+# Mac related
+.DS_Store
+
+#Databases
+databases/*
+
+#Projects
+projects/*
