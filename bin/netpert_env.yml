@@ -1,10 +1,9 @@
 name: netpert_env
 channels:
   - conda-forge
-  - anaconda
-  - defaults
 dependencies:
-  - numpy
-  - pandas
-  - python
-  - scipy
+  - numpy=1.26.3
+  - pandas=2.2.0
+  - python=3.12.1
+  - scipy=1.12.0
+  - networkx=3.1

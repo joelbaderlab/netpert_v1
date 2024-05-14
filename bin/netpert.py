@@ -6,6 +6,7 @@ import argparse
 import logging
 import pandas as pd
 import numpy as np
+import networkx as nx
 from math import log, e, isclose
 from scipy import linalg,integrate
 from collections import defaultdict
@@ -28,9 +29,46 @@ class CMDParser():
         analysis_parser.add_argument('-s',choices=['human','mouse'],default='human',help='Species. Default human')
         analysis_parser.set_defaults(func = runAnalysis)
 
+        #NetPert, BC, and TieDIE analysis
+        allmethods_parser = subparser.add_parser('all_methods', help='Runs NetPert, BC, and TieDIE.')
+        allmethods_parser.add_argument('project_dir',help='Project directory path.')
+        allmethods_parser.add_argument('driver',help='Network driver gene symbol.')
+        allmethods_parser.add_argument('-s',choices=['human','mouse'],default='human',help='Species. Default human')
+        allmethods_parser.set_defaults(func = runAllMethods)
+
+
         args = parser.parse_args()
         self.__dict__.update(args.__dict__)
         return
+
+def runAllMethods(args,output='write'):
+    """
+    Runs NetPert, BC, and TieDIE.
+    """
+    print('*************************************************')
+    logger.info('Running NetPert, BC, and TieDIE analysis...')
+    print('*************************************************')
+    
+    #Compile interactions into one file and store it in databases dir, if needed.
+    getNetworkInteractions(args)
+
+    #Get driver, intermediates, and network respones.
+    driver,intermediates,responses = getNetworkGenes(args,verbose=True)
+
+    #Prioritize genes
+    prioritization_parts = getPrioritizationAllMethods(args,driver,intermediates,responses,r=0.5,nt=2)
+
+    #Output
+    if output == 'write':
+        #write to file
+        writeWeightsAllMethods(args,driver,intermediates,responses,prioritization_parts,drug_target_max=5)
+        return None
+    elif output == 'return':
+        #return results
+        return(prioritization_parts)
+    else:
+        logger.error('runAllMethods returns NetPert, BC, and TieDIE prioritization results or writes to file')
+        sys.exit()
 
 def runAnalysis(args,output='write'):
     """
@@ -60,6 +98,59 @@ def runAnalysis(args,output='write'):
     else:
         logger.error('runAnalysis returns NetPert prioritization results or writes to file')
         sys.exit()
+
+def writeWeightsAllMethods(args,driver,intermediates,responses,prioritization_parts,drug_target_max=5):
+    """
+    Writes NetPert, BC, and TieDIE weights to project directory.
+    Adds Repurposing Hub compounds.
+    """
+
+    v2weightNP = prioritization_parts['NetPert']['weights']
+    v2rankNP = prioritization_parts['NetPert']['ranks']
+    vertices_ranked = prioritization_parts['NetPert']['vertices_ranked']
+
+    v2weightBC = prioritization_parts['BC']['weights']
+    v2rankBC = prioritization_parts['BC']['ranks']
+
+    v2weightTD = prioritization_parts['TieDIE']['weights']
+    v2rankTD = prioritization_parts['TieDIE']['ranks']
+
+    #map human gene to repurposing hub drug
+    hgene2repurp,repurp2hgene = getRepurpDrugs()
+
+    #map mouse gene to repurposing hub drug
+    v2repurp = getNetworkGenes2RepurpDrugs(args,driver,intermediates,responses,hgene2repurp)
+
+    #get gene pathway type
+    v2pathType = getPathType(args,driver,intermediates,responses)
+    v2DIIR = getPathTypeDIIR(args,driver,intermediates,responses,v2pathType)
+
+    #write
+    filepath = args.project_dir + '/geneRankingsAllMethods.tsv'
+    fp = open(filepath,'w')
+    fields = ['gene','type','DIIR','NetPert_rank','BCS_rank','TieDIE_rank','NetPert_weight','BCS_weight','TieDIE_weight','repurposinghub_cpds']
+    fp.write('\t'.join(fields) + '\n')
+    for v in vertices_ranked:
+        repurps = dict()
+        repurplist = list()
+        if v in v2repurp:
+            repurps = v2repurp[v]
+        for drug in repurps.keys():
+            l = len(repurp2hgene[drug])
+            if l <= drug_target_max:
+                repurplist.append(drug)
+        repurpstr = ','.join(repurplist)
+
+        if v2DIIR[v]:
+            diir = 'DIIR'
+        else:
+            diir = ''
+
+        toks = [v,v2pathType[v],diir,str(v2rankNP[v]),str(v2rankBC[v]),str(v2rankTD[v]),"{:.2e}".format(v2weightNP[v]),"{:.2e}".format(v2weightBC[v]),"{:.2e}".format(v2weightTD[v]),repurpstr]
+        fp.write('\t'.join(toks) + '\n')
+    fp.close()
+    logger.info('Wrote gene rankings to %s.',filepath)
+    return None
 
 def writeWeights(args,driver,intermediates,responses,prioritization_parts,drug_target_max=5):
     """
@@ -375,6 +466,83 @@ def getNetworkGenes(args,verbose=False):
 
     return(driver,intermediates,responses)
 
+def getPrioritizationAllMethods(args,driver,intermediates,responses,r=0.5,nt=16):
+    """
+    Calculates weights and ranks genes for NetPert, BC, and TieDIE.
+    """
+
+    #get whole gene list
+    wholegenelist = list()
+    wholegenelist.append(driver)
+    wholegenelist.extend(intermediates)
+    wholegenelist.extend(responses)
+
+    #get network edges 
+    edge_dict = readEdges(args)
+    edge_ab, edge_ba = edgeTuplesToDicts(edge_dict)
+
+    #get genename (vertex) to index dict and vice versa
+    v2i, i2v = nameToIndex(wholegenelist)
+
+    #get genename (vertex) to indegree dict and outdegree dict
+    v2indeg, v2outdeg = nameToDegree(wholegenelist,edge_ba,edge_ab)
+
+    #get genename (vertex) to type (driver, intermediate, response)
+    v2type = nameToType(wholegenelist,driver,intermediates,responses)
+
+    # result[method] = {'weights':weights, 'ranks':ranks, 'vertices_ranked':vertices_ranked}
+    results = {}
+
+    #get laplacian matrix
+    (adj_mat, lap_mat) = getLaplacian(edge_dict, v2i)
+
+    #get time step size dt
+    dt = getTimeStep(driver,v2outdeg,r=r,nt=nt)
+
+    #get G(t) list
+    g_list = getGlist(lap_mat,dt,nt)
+
+    #get weights for NetPert
+    v2weight = getWeights(args,g_list,v2i,driver,responses,nt,dt,endpoints=False)
+
+    #get rankings for NetPert
+    (vertices_ranked,v2rank) = getRankings(v2weight,ties='competition',reverse_order=True)
+
+    results['NetPert'] = {'weights':v2weight,'ranks':v2rank,'vertices_ranked':vertices_ranked}
+
+    #betweenness centrality
+    #make networkx graph
+    G = nx.DiGraph()
+    G.add_edges_from(edge_dict)
+
+    #get bc weights
+    v2weight = nx.betweenness_centrality_subset(G,sources=[driver],targets=responses)
+
+    #get rankings for BC
+    (vertices_ranked,v2rank) = getRankings(v2weight,ties='competition',reverse_order=True)
+
+    results['BC'] = {'weights':v2weight,'ranks':v2rank,'vertices_ranked':vertices_ranked}
+
+    #TieDIE
+    #get transpose laplacian matrix
+    (adj_mat_t, lap_mat_t) = getLaplacianTranspose(edge_dict,v2i)
+
+    #each diffusion process get half the total diffusion time
+    nt = 1
+
+    #get G(t) based on transpose of the Laplacian
+    g_list_t = getGlist(lap_mat_t,dt,nt)
+
+    #get weights for TieDIE
+    v2weight = getWeightsTieDIE(args,g_list,g_list_t,v2i,driver,responses,nt,endpoints=True)
+
+    #get rankings for TieDIE
+    (vertices_ranked,v2rank) = getRankings(v2weight,ties='competition',reverse_order=True)
+
+    results['TieDIE'] = {'weights':v2weight,'ranks':v2rank,'vertices_ranked':vertices_ranked}
+
+    return results
+
 def getPrioritization(args,driver,intermediates,responses,r=0.5,nt=16):
     """
     Calculates NetPert weights and ranks genes.
@@ -540,6 +708,57 @@ def getWeights(args,g_list,v2i,driver,responses,nt,dt,endpoints=False):
 
     return(v2w)
 
+def getWeightsTieDIE(args,g_list,g_list_t,v2i,driver,responses,nt,endpoints=True):
+    """
+    Returns the TieDIE weight for each gene in the network in a dict.
+    """
+    logger.info('Calculating TieDIE weights for network genes...')
+    v2w = dict()
+    v2wd = dict()
+    v2wr = dict()
+    vertices = sorted(v2i.keys())
+
+    d = driver
+    a = v2i[d]
+    for v in vertices:
+        v2wr[v] = 0.0
+        x = v2i[v]
+        v2wd[v] = g_list[nt][x,a] #driver to intermediate
+
+    for r in responses:
+        b = v2i[r]
+        for v in vertices:
+            if not endpoints:
+                if v == d or v == r:
+                    continue
+            x = v2i[v]
+            z = g_list_t[nt][x,b]
+            v2wr[v] = v2wr[v] + z
+    norm = 0
+    for v in vertices:
+        norm += v2wr[v]
+    if norm == 0.:
+        norm = 1.
+    dcount = 0
+    rcount = 0
+    tiecount = 0
+    for v in vertices:
+        v2wr[v] = v2wr[v] / norm
+
+    for v in vertices:
+        if v2wr[v] < v2wd[v]:
+            v2w[v] = v2wr[v]
+            rcount += 1
+        elif v2wr[v] > v2wd[v]:
+            v2w[v] = v2wd[v]
+            dcount += 1
+        else:
+            v2w[v] = v2wd[v]
+            tiecount += 1
+    logger.info('%d genes had diffusion from responses smaller, %d had diffusion from driver smaller, %d genes had tie.',rcount,dcount,tiecount)
+
+    return(v2w)
+
 def getMouse2Human():
     """
     Returns: 
@@ -664,6 +883,24 @@ def getLaplacian(edge_dict,v2i):
     lap_mat = lap_mat - adj_mat
     return(adj_mat, lap_mat)
 
+def getLaplacianTranspose(edge_dict,v2i):
+    """
+    Returns the transposes of the adjacency matrix and Laplacian.
+    """
+    nvert = len(v2i)
+    adj_mat = np.zeros( (nvert,nvert) )
+    indeg_arr = np.zeros(nvert)
+    outdeg_arr = np.zeros(nvert)
+    lap_mat = np.zeros( (nvert,nvert) )
+    for (dest,src) in edge_dict.keys():
+        (a,b) = (v2i[src],v2i[dest])
+        adj_mat[b,a] += 1.0
+        indeg_arr[b] += 1.0
+        outdeg_arr[a] += 1.0
+    for a in range(nvert):
+        lap_mat[a,a] = outdeg_arr[a]
+    lap_mat = lap_mat - adj_mat
+    return(adj_mat, lap_mat)
 
 def nameToType(genelist,driver,intermediates,responses):
     """
